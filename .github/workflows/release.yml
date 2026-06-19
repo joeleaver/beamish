@@ -12,9 +12,10 @@ permissions:
 
 jobs:
   linux:
-    # 22.04 links against an older glibc, so the artifacts run on a wide range
-    # of distros (newer ones are forward-compatible).
-    runs-on: ubuntu-22.04
+    # Build on the current Ubuntu so packages depend on current (t64) library
+    # names and a modern glibc. Installs on this and newer releases; the
+    # AppImage remains the portable option for older/other distros.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
