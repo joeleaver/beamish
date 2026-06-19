@@ -1,0 +1,15 @@
+[package]
+name = "beamish"
+version = "0.1.0"
+edition = "2021"
+description = "Beamish — a Linux GUI to send & receive files with Android phones over Quick Share"
+
+[dependencies]
+rinch = { path = "../rinch/crates/rinch", features = ["desktop", "components", "theme", "debug", "system-tray"] }
+rqs_lib = { path = "../rquickshare/core_lib" }
+tokio = { version = "1", features = ["full"] }
+rfd = "0.15"
+tracing-subscriber = "0.3"
+
+[profile.release]
+opt-level = 2
