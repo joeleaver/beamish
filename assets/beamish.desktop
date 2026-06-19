@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Beamish
+GenericName=Quick Share
+Comment=Send and receive files with Android phones over Quick Share
+Exec=beamish
+Icon=beamish
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=QuickShare;NearbyShare;Android;files;share;transfer;bluetooth;
+StartupNotify=true
+StartupWMClass=beamish

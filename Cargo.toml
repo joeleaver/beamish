@@ -2,14 +2,77 @@
 name = "beamish"
 version = "0.1.0"
 edition = "2021"
-description = "Beamish — a Linux GUI to send & receive files with Android phones over Quick Share"
+description = "Send & receive files with Android phones over Quick Share"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/joeleaver/beamish"
+homepage = "https://github.com/joeleaver/beamish"
+readme = "README.md"
+authors = ["Joe Leaver"]
 
 [dependencies]
-rinch = { git = "https://github.com/joeleaver/rinch", branch = "main", features = ["desktop", "components", "theme", "debug", "system-tray"] }
+rinch = { git = "https://github.com/joeleaver/rinch", branch = "main", features = ["desktop", "components", "theme", "system-tray"] }
 rqs_lib = { git = "https://github.com/joeleaver/rquickshare", branch = "beamish" }
 tokio = { version = "1", features = ["full"] }
 rfd = "0.15"
 tracing-subscriber = "0.3"
 
+[features]
+# Dev-only: enables rinch's localhost debug server (screenshot/DOM capture).
+# Deliberately NOT in shipped builds. Run dev with:
+#   cargo run --release --features dev-debug
+dev-debug = ["rinch/debug"]
+
 [profile.release]
 opt-level = 2
+lto = "thin"
+strip = true
+
+# ---------------------------------------------------------------------------
+# Debian/Ubuntu package — `cargo deb`
+# ---------------------------------------------------------------------------
+[package.metadata.deb]
+section = "net"
+priority = "optional"
+# bluez provides the org.bluez D-Bus service Beamish talks to at runtime.
+depends = "$auto, bluez"
+extended-description = """\
+Beamish is a small desktop app that sends and receives files with Android \
+phones over Google Quick Share (Nearby Share), using Bluetooth LE/L2CAP and \
+Wi-Fi. It lives in the system tray and stays discoverable in the background."""
+assets = [
+    ["target/release/beamish", "usr/bin/", "755"],
+    ["assets/beamish.desktop", "usr/share/applications/", "644"],
+    ["assets/icons/icon_16.png",  "usr/share/icons/hicolor/16x16/apps/beamish.png",    "644"],
+    ["assets/icons/icon_32.png",  "usr/share/icons/hicolor/32x32/apps/beamish.png",    "644"],
+    ["assets/icons/icon_48.png",  "usr/share/icons/hicolor/48x48/apps/beamish.png",    "644"],
+    ["assets/icons/icon_64.png",  "usr/share/icons/hicolor/64x64/apps/beamish.png",    "644"],
+    ["assets/icons/icon_128.png", "usr/share/icons/hicolor/128x128/apps/beamish.png",  "644"],
+    ["assets/icons/icon_256.png", "usr/share/icons/hicolor/256x256/apps/beamish.png",  "644"],
+    ["assets/icons/icon_512.png", "usr/share/icons/hicolor/512x512/apps/beamish.png",  "644"],
+    ["assets/icon.svg",           "usr/share/icons/hicolor/scalable/apps/beamish.svg", "644"],
+    ["assets/beamish-autostart.desktop", "usr/share/doc/beamish/beamish-autostart.desktop", "644"],
+    ["README.md", "usr/share/doc/beamish/README.md", "644"],
+]
+
+# ---------------------------------------------------------------------------
+# Fedora/RHEL package — `cargo generate-rpm`
+# ---------------------------------------------------------------------------
+[package.metadata.generate-rpm]
+license = "GPL-3.0-or-later"
+assets = [
+    { source = "target/release/beamish", dest = "/usr/bin/beamish", mode = "755" },
+    { source = "assets/beamish.desktop", dest = "/usr/share/applications/beamish.desktop", mode = "644" },
+    { source = "assets/icons/icon_16.png",  dest = "/usr/share/icons/hicolor/16x16/apps/beamish.png",    mode = "644" },
+    { source = "assets/icons/icon_32.png",  dest = "/usr/share/icons/hicolor/32x32/apps/beamish.png",    mode = "644" },
+    { source = "assets/icons/icon_48.png",  dest = "/usr/share/icons/hicolor/48x48/apps/beamish.png",    mode = "644" },
+    { source = "assets/icons/icon_64.png",  dest = "/usr/share/icons/hicolor/64x64/apps/beamish.png",    mode = "644" },
+    { source = "assets/icons/icon_128.png", dest = "/usr/share/icons/hicolor/128x128/apps/beamish.png",  mode = "644" },
+    { source = "assets/icons/icon_256.png", dest = "/usr/share/icons/hicolor/256x256/apps/beamish.png",  mode = "644" },
+    { source = "assets/icons/icon_512.png", dest = "/usr/share/icons/hicolor/512x512/apps/beamish.png",  mode = "644" },
+    { source = "assets/icon.svg",           dest = "/usr/share/icons/hicolor/scalable/apps/beamish.svg", mode = "644" },
+    { source = "assets/beamish-autostart.desktop", dest = "/usr/share/doc/beamish/beamish-autostart.desktop", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/beamish/README.md", mode = "644" },
+]
+
+[package.metadata.generate-rpm.requires]
+bluez = "*"

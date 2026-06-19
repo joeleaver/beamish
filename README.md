@@ -10,7 +10,41 @@ your PC. Built in Rust on the [Rinch](https://github.com/joeleaver/rinch) GUI fr
 - Lives in the **system tray** and stays discoverable in the background.
 - Transfers negotiate BLE → L2CAP → Wi-Fi for full-speed transfers.
 
-## Build & run
+## Install
+
+Grab a package for your distro from the
+[Releases](https://github.com/joeleaver/beamish/releases) page:
+
+**Debian / Ubuntu**
+
+```sh
+sudo apt install ./beamish_*_amd64.deb
+```
+
+**Fedora / RHEL**
+
+```sh
+sudo dnf install ./beamish-*.x86_64.rpm
+```
+
+**AppImage** (any distro)
+
+```sh
+chmod +x Beamish-x86_64.AppImage
+./Beamish-x86_64.AppImage
+```
+
+Beamish talks to BlueZ for Bluetooth, so make sure it's running
+(`systemctl status bluetooth`). The `.deb`/`.rpm` declare `bluez` as a dependency.
+
+**Start at login** (optional) — copy the bundled autostart entry so Beamish boots
+into the tray ready to receive:
+
+```sh
+cp /usr/share/doc/beamish/beamish-autostart.desktop ~/.config/autostart/
+```
+
+## Build from source
 
 Dependencies are fetched from git — no sibling checkouts needed:
 
@@ -18,15 +52,36 @@ Dependencies are fetched from git — no sibling checkouts needed:
 cargo run --release
 ```
 
-The release profile is recommended — debug builds are too slow for the
-consent/PIN dialog. The built binary is `target/release/beamish`.
-
-Beamish pulls two git crates:
+Use `--release`; debug builds are too slow for the consent/PIN dialog. The built
+binary is `target/release/beamish`. Beamish pulls two git crates:
 
 - [`rinch`](https://github.com/joeleaver/rinch) — the GUI framework (tracks `main`).
 - [`rqs_lib`](https://github.com/joeleaver/rquickshare/tree/beamish) — a fork of
   [rquickshare](https://github.com/Martichou/rquickshare) with the BLE/L2CAP
   receive path and the Wi-Fi-upgrade keepalive patch (`beamish` branch).
+
+Build-time system libraries (Debian/Ubuntu names): `pkg-config libdbus-1-dev
+libudev-dev libssl-dev libxkbcommon-dev libwayland-dev libgtk-3-dev
+libayatana-appindicator3-dev` plus the usual X11 `-dev` libs (see the CI
+workflow for the exact list).
+
+For development with the Rinch debug server (localhost DOM/screenshot capture),
+build with the opt-in feature — it is **off** in shipped builds:
+
+```sh
+cargo run --release --features dev-debug
+```
+
+## Releasing
+
+Native packages are wired up with `cargo-deb`, `cargo-generate-rpm`, and AppImage
+in [`.github/workflows/release.yml`](.github/workflows/release.yml). Push a version
+tag to build all three and attach them to a GitHub Release:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## Status
 

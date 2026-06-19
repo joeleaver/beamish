@@ -1,0 +1,13 @@
+[Desktop Entry]
+# Opt-in autostart. Copy this to ~/.config/autostart/ to have Beamish start
+# at login and sit in the tray, ready to receive:
+#   cp /usr/share/doc/beamish/beamish-autostart.desktop ~/.config/autostart/
+Type=Application
+Name=Beamish
+Comment=Start Beamish at login (ready to receive in the tray)
+Exec=beamish
+Icon=beamish
+Terminal=false
+Categories=Network;FileTransfer;Utility;
+StartupWMClass=beamish
+X-GNOME-Autostart-enabled=true
