@@ -452,10 +452,19 @@ fn app() -> NodeHandle {
                             button {
                                 class: "qs-btn-ghost",
                                 onclick: move || {
-                                    if let Some(p) = rfd::FileDialog::new().pick_file() {
-                                        selected_file.set(Some(p.display().to_string()));
-                                        let _ = cmd.get().send(Cmd::StartDiscovery);
-                                    }
+                                    // The portal file dialog (rfd -> ashpd -> zbus) must run inside
+                                    // a Tokio runtime, and off the UI thread so it doesn't block the
+                                    // Wayland event loop. The path returns via a cross-thread
+                                    // Signal::set (repaints since rinch #45).
+                                    std::thread::spawn(move || {
+                                        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                                            .enable_all().build() else { return; };
+                                        if let Some(f) = rt.block_on(rfd::AsyncFileDialog::new().pick_file()) {
+                                            // .send() (not .set()) — cross-thread update from this worker.
+                                            selected_file.send(Some(f.path().display().to_string()));
+                                            let _ = cmd.get().send(Cmd::StartDiscovery);
+                                        }
+                                    });
                                 },
                                 "Choose file…"
                             }
@@ -509,11 +518,16 @@ fn app() -> NodeHandle {
                             button {
                                 class: "qs-link",
                                 onclick: move || {
-                                    if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                                        let s = p.display().to_string();
-                                        download_path.set(s.clone());
-                                        let _ = cmd.get().send(Cmd::SetDownload(s));
-                                    }
+                                    // Off the UI thread, inside a Tokio runtime — see "Choose file…".
+                                    std::thread::spawn(move || {
+                                        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                                            .enable_all().build() else { return; };
+                                        if let Some(f) = rt.block_on(rfd::AsyncFileDialog::new().pick_folder()) {
+                                            let s = f.path().display().to_string();
+                                            download_path.send(s.clone()); // cross-thread update
+                                            let _ = cmd.get().send(Cmd::SetDownload(s));
+                                        }
+                                    });
                                 },
                                 "Change…"
                             }
