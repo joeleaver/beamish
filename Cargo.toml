@@ -5,7 +5,7 @@ edition = "2021"
 description = "Beamish — a Linux GUI to send & receive files with Android phones over Quick Share"
 
 [dependencies]
-rinch = { git = "https://github.com/joeleaver/rinch", branch = "fix/cross-thread-signal-repaint", features = ["desktop", "components", "theme", "debug", "system-tray"] }
+rinch = { git = "https://github.com/joeleaver/rinch", branch = "main", features = ["desktop", "components", "theme", "debug", "system-tray"] }
 rqs_lib = { git = "https://github.com/joeleaver/rquickshare", branch = "beamish" }
 tokio = { version = "1", features = ["full"] }
 rfd = "0.15"
