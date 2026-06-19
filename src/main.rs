@@ -38,6 +38,7 @@ enum Cmd {
     SetDownload(String),
     SetAutoAccept(bool),
     StartDiscovery,
+    StopDiscovery,
 }
 
 // Which view the bottom nav is showing. Receive is the default (the app's main
@@ -129,6 +130,7 @@ html, body { margin: 0; padding: 0; background: #0D1016; }
 .qs-sender { font-size: 20px; font-weight: 700; color: #F2F6FB; }
 .qs-files { font-size: 13px; color: #8A95A8; }
 .qs-pin-label { font-size: 12px; color: #7C879A; margin-top: 8px; }
+.qs-send-pin { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 8px 0 4px; }
 .qs-pin { font-family: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
   font-size: 36px; font-weight: 700; letter-spacing: 12px; color: #FFB454;
   text-shadow: 0 0 18px rgba(255,180,84,0.35); padding-left: 12px; margin: 2px 0 6px; }
@@ -205,6 +207,10 @@ fn app() -> NodeHandle {
     let auto_accept = Signal::new(false);
     // Active bottom-nav view; Receive by default.
     let view = Signal::new(View::Receive);
+    // Outbound verification PIN + the id of the device we're sending to, so the
+    // code can be shown inline while connecting / before the transfer is confirmed.
+    let send_pin = Signal::new(Option::<String>::None);
+    let sending_id = Signal::new(Option::<String>::None);
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<Cmd>();
     // Wrap the sender in a (Copy) Signal so every UI closure can grab a clone
@@ -249,6 +255,9 @@ fn app() -> NodeHandle {
             // Mirrors the UI "Auto-accept" toggle, kept in sync via Cmd so the
             // backend never has to read a UI Signal off-thread.
             let mut auto_accept_enabled = false;
+            // True between Cmd::Send and the transfer's terminal state, so we only
+            // surface the outbound PIN (the lib emits it at an intermediate state).
+            let mut is_sending = false;
 
             let mut msg_rx = msg_sender.subscribe();
             let mut dch_rx = dch.subscribe();
@@ -282,6 +291,13 @@ fn app() -> NodeHandle {
                                 .and_then(|md| md.source.as_ref())
                                 .map(|s| s.name.clone())
                                 .unwrap_or_else(|| "Unknown".to_string());
+                            // The outbound PIN rides an intermediate state we don't
+                            // otherwise match; grab it whenever it appears mid-send.
+                            if is_sending {
+                                if let Some(pin) = m.meta.as_ref().and_then(|md| md.pin_code.clone()) {
+                                    send_pin.send(Some(pin));
+                                }
+                            }
                             match m.state {
                                 Some(State::WaitingForUserConsent) => {
                                     activity_gen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -304,10 +320,10 @@ fn app() -> NodeHandle {
                                 }
                                 Some(State::ReceivingFiles) => { activity_gen.fetch_add(1, std::sync::atomic::Ordering::Relaxed); view.send(View::Receive); incoming.send(None); status.send(format!("Receiving from {name}…")); }
                                 Some(State::SendingFiles) => { activity_gen.fetch_add(1, std::sync::atomic::Ordering::Relaxed); status.send(format!("Sending to {name}…")); }
-                                Some(State::Finished) => { status.send("✓ Transfer complete".to_string()); incoming.send(None); schedule_ready_reset(); }
-                                Some(State::Rejected) => { status.send("Rejected".to_string()); incoming.send(None); schedule_ready_reset(); }
-                                Some(State::Cancelled) => { status.send("Cancelled".to_string()); incoming.send(None); schedule_ready_reset(); }
-                                Some(State::Disconnected) => { status.send("Ready".to_string()); incoming.send(None); }
+                                Some(State::Finished) => { status.send("✓ Transfer complete".to_string()); incoming.send(None); is_sending = false; send_pin.send(None); sending_id.send(None); schedule_ready_reset(); }
+                                Some(State::Rejected) => { status.send("Rejected".to_string()); incoming.send(None); is_sending = false; send_pin.send(None); sending_id.send(None); schedule_ready_reset(); }
+                                Some(State::Cancelled) => { status.send("Cancelled".to_string()); incoming.send(None); is_sending = false; send_pin.send(None); sending_id.send(None); schedule_ready_reset(); }
+                                Some(State::Disconnected) => { status.send("Ready".to_string()); incoming.send(None); is_sending = false; send_pin.send(None); sending_id.send(None); }
                                 _ => {}
                             }
                         }
@@ -339,6 +355,7 @@ fn app() -> NodeHandle {
                             Some(Cmd::Accept(id)) => { let _ = msg_sender.send(ChannelMessage { id, direction: ChannelDirection::FrontToLib, action: Some(ChannelAction::AcceptTransfer), ..Default::default() }); }
                             Some(Cmd::Reject(id)) => { let _ = msg_sender.send(ChannelMessage { id, direction: ChannelDirection::FrontToLib, action: Some(ChannelAction::RejectTransfer), ..Default::default() }); }
                             Some(Cmd::Send { id, name, addr, path }) => {
+                                is_sending = true;
                                 let _ = sender_file.send(SendInfo { id, name, addr, ob: OutboundPayload::Files(vec![path]) }).await;
                             }
                             Some(Cmd::SetDownload(p)) => rqs.set_download_path(Some(PathBuf::from(p))),
@@ -348,6 +365,15 @@ fn app() -> NodeHandle {
                                     let _ = rqs.discovery(dch.clone());
                                     discovery_active = true;
                                     status.send("Searching for nearby devices…".to_string());
+                                }
+                            }
+                            // Leaving the Send tab stops discovery so we revert to a
+                            // pure receiver — running it idle advertises us as a sender
+                            // (0xFE2C) and stops phones from listing us to receive.
+                            Some(Cmd::StopDiscovery) => {
+                                if discovery_active {
+                                    rqs.stop_discovery();
+                                    discovery_active = false;
                                 }
                             }
                         }
@@ -452,17 +478,16 @@ fn app() -> NodeHandle {
                             button {
                                 class: "qs-btn-ghost",
                                 onclick: move || {
-                                    // The portal file dialog (rfd -> ashpd -> zbus) must run inside
-                                    // a Tokio runtime, and off the UI thread so it doesn't block the
-                                    // Wayland event loop. The path returns via a cross-thread
-                                    // Signal::set (repaints since rinch #45).
+                                    // The portal file dialog (rfd -> ashpd -> zbus) must run inside a
+                                    // Tokio runtime, off the UI thread so it doesn't block the Wayland
+                                    // loop. Only Signal::send() is cross-thread safe (.get()/.set()
+                                    // touch a thread-local store and panic off-thread). Discovery is
+                                    // already running (started on Send-tab entry); this just sets the file.
                                     std::thread::spawn(move || {
                                         let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                                             .enable_all().build() else { return; };
                                         if let Some(f) = rt.block_on(rfd::AsyncFileDialog::new().pick_file()) {
-                                            // .send() (not .set()) — cross-thread update from this worker.
                                             selected_file.send(Some(f.path().display().to_string()));
-                                            let _ = cmd.get().send(Cmd::StartDiscovery);
                                         }
                                     });
                                 },
@@ -474,6 +499,16 @@ fn app() -> NodeHandle {
                                     .unwrap_or_else(|| "no file chosen".to_string())}
                             }
                         }
+                        if sending_id.get().is_some() {
+                            div { class: "qs-send-pin",
+                                div { class: "qs-pin-label",
+                                    {|| { let sid = sending_id.get().unwrap_or_default();
+                                        let name = devices.get().into_iter().find(|d| d.id == sid).map(|d| d.name).unwrap_or_else(|| "device".to_string());
+                                        if send_pin.get().is_some() { format!("Confirm this code matches {name}") } else { format!("Connecting to {name}…") } }}
+                                }
+                                div { class: "qs-pin", {|| send_pin.get().unwrap_or_default()} }
+                            }
+                        }
                         div { class: "qs-panel-head", "Nearby devices" }
                         for d in devices.get() {
                             button {
@@ -482,11 +517,12 @@ fn app() -> NodeHandle {
                                 onclick: {
                                     let d = d.clone();
                                     move || {
+                                        // Sending requires a chosen file; otherwise this click is a no-op.
                                         if let Some(f) = selected_file.get() {
+                                            sending_id.set(Some(d.id.clone()));
+                                            send_pin.set(None);
                                             let _ = cmd.get().send(Cmd::Send { id: d.id.clone(), name: d.name.clone(), addr: d.addr.clone(), path: f });
                                             status.set(format!("Sending to {}…", d.name));
-                                        } else {
-                                            status.set("Choose a file first".to_string());
                                         }
                                     }
                                 },
@@ -519,13 +555,14 @@ fn app() -> NodeHandle {
                                 class: "qs-link",
                                 onclick: move || {
                                     // Off the UI thread, inside a Tokio runtime — see "Choose file…".
+                                    let tx = cmd.get();
                                     std::thread::spawn(move || {
                                         let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                                             .enable_all().build() else { return; };
                                         if let Some(f) = rt.block_on(rfd::AsyncFileDialog::new().pick_folder()) {
                                             let s = f.path().display().to_string();
                                             download_path.send(s.clone()); // cross-thread update
-                                            let _ = cmd.get().send(Cmd::SetDownload(s));
+                                            let _ = tx.send(Cmd::SetDownload(s));
                                         }
                                     });
                                 },
@@ -544,21 +581,21 @@ fn app() -> NodeHandle {
 
             // ── bottom nav ──
             div { class: "qs-nav",
-                button { class: "qs-tab", onclick: move || view.set(View::Receive),
+                button { class: "qs-tab", onclick: move || { view.set(View::Receive); let _ = cmd.get().send(Cmd::StopDiscovery); },
                     if view.get() == View::Receive {
                         div { class: "qs-tab-in qs-tab-on", span { class: "qs-tab-icon", "↓" } div { "Receive" } }
                     } else {
                         div { class: "qs-tab-in", span { class: "qs-tab-icon", "↓" } div { "Receive" } }
                     }
                 }
-                button { class: "qs-tab", onclick: move || view.set(View::Send),
+                button { class: "qs-tab", onclick: move || { view.set(View::Send); let _ = cmd.get().send(Cmd::StartDiscovery); },
                     if view.get() == View::Send {
                         div { class: "qs-tab-in qs-tab-on", span { class: "qs-tab-icon", "↑" } div { "Send" } }
                     } else {
                         div { class: "qs-tab-in", span { class: "qs-tab-icon", "↑" } div { "Send" } }
                     }
                 }
-                button { class: "qs-tab", onclick: move || view.set(View::Options),
+                button { class: "qs-tab", onclick: move || { view.set(View::Options); let _ = cmd.get().send(Cmd::StopDiscovery); },
                     if view.get() == View::Options {
                         div { class: "qs-tab-in qs-tab-on", span { class: "qs-tab-icon", "⚙" } div { "Options" } }
                     } else {
