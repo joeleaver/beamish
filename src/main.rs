@@ -641,7 +641,12 @@ fn main() {
             // App icon (assets/icon.svg → .png). Shown in the title bar
             // and taskbar; on Wayland a .desktop file is auto-generated from app_id.
             icon: Some(include_bytes!("../assets/icon.png")),
-            app_id: Some("beamish".into()),
+            // Defaults to "beamish" for native builds; the Flatpak sets
+            // BEAMISH_APP_ID so the Wayland app-id matches the flatpak id and
+            // the window groups under our installed icon/.desktop.
+            app_id: Some(
+                std::env::var("BEAMISH_APP_ID").unwrap_or_else(|_| "beamish".into()),
+            ),
             // Hide to tray on window-close instead of quitting (keeps receiving).
             on_close_requested: Some(std::sync::Arc::new(|| {
                 hide_current_window();
