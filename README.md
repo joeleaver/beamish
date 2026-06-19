@@ -23,10 +23,7 @@ consent/PIN dialog. The built binary is `target/release/beamish`.
 
 Beamish pulls two git crates:
 
-- [`rinch`](https://github.com/joeleaver/rinch) — the GUI framework. Currently
-  tracks the branch for [PR #45](https://github.com/joeleaver/rinch/pull/45) (a
-  background-thread repaint fix Beamish needs); repoint this dep to `main` once
-  that PR merges.
+- [`rinch`](https://github.com/joeleaver/rinch) — the GUI framework (tracks `main`).
 - [`rqs_lib`](https://github.com/joeleaver/rquickshare/tree/beamish) — a fork of
   [rquickshare](https://github.com/Martichou/rquickshare) with the BLE/L2CAP
   receive path and the Wi-Fi-upgrade keepalive patch (`beamish` branch).
