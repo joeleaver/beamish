@@ -3039,6 +3039,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nearby-rs"
+version = "0.1.0"
+source = "git+https://github.com/joeleaver/nearby-rs?branch=master#3b2162702cfeb893177b6732b30e43980db700bb"
+dependencies = [
+ "prost",
+ "prost-build",
+ "tokio",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4420,7 +4430,7 @@ dependencies = [
 [[package]]
 name = "rqs_lib"
 version = "0.11.5"
-source = "git+https://github.com/joeleaver/rquickshare?branch=beamish#f72b9ac6b60605e4409da4ff07f23f55968f1296"
+source = "git+https://github.com/joeleaver/rquickshare?branch=beamish#65369d7ee9976ade65409c8eb13e4d12ee3acb16"
 dependencies = [
  "anyhow",
  "base64",
@@ -4438,6 +4448,7 @@ dependencies = [
  "log",
  "mdns-sd",
  "mime_guess",
+ "nearby-rs",
  "num-bigint",
  "once_cell",
  "p256",
