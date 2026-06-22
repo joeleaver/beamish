@@ -10,6 +10,18 @@ use rinch::tray::TrayIconBuilder;
 use rqs_lib::channel::{ChannelAction, ChannelDirection, ChannelMessage};
 use rqs_lib::{EndpointInfo, OutboundPayload, SendInfo, State, Visibility, RQS};
 
+/// Handle SIGINT/SIGTERM: stop RQS gracefully (this cancels the cancellation token,
+/// so an in-flight WIFI_HOTSPOT SoftAP is torn down before we go) then terminate the
+/// whole process. We must exit explicitly: tokio's signal handlers suppress the
+/// default terminate action, and the rinch GUI runs on the main thread, so otherwise
+/// the process would linger after the backend stopped. The stop is bounded so a
+/// wedged teardown can't make beamish unkillable.
+async fn shutdown_and_exit(rqs: &mut RQS, sig: &str) -> ! {
+    eprintln!("beamish: {sig} — stopping RQS (tears down any SoftAP), then exiting");
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(6), rqs.stop()).await;
+    std::process::exit(0);
+}
+
 #[derive(Clone, PartialEq)]
 struct Incoming {
     id: String,
@@ -22,7 +34,12 @@ struct Incoming {
 struct Device {
     id: String,
     name: String,
+    // "ip:port" for an mDNS/WiFi endpoint; empty for a BLE-only one.
     addr: String,
+    // Set when the device was found over BLE ("visible to everyone") rather than
+    // mDNS. Sending to it goes over L2CAP, which isn't wired up yet (Phase 2).
+    bt_address: Option<String>,
+    psm: Option<u16>,
 }
 
 // Commands from the UI thread to the async backend.
@@ -163,6 +180,9 @@ html, body { margin: 0; padding: 0; background: #0D1016; }
   cursor: pointer; transition: border-color 150ms ease, background-color 150ms ease; }
 .qs-device-chip:hover { border-color: #34E1D0; background: #18222E; }
 .qs-chip-glyph { color: #34E1D0; font-weight: 700; }
+.qs-chip-badge { margin-left: auto; font-size: 11px; font-weight: 600;
+  color: #F2B441; background: #2A2233; border: 1px solid #4A3A1E;
+  border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
 
 .qs-footer { display: flex; align-items: center; justify-content: space-between;
   margin-top: auto; padding-top: 4px; font-size: 13px; color: #7C879A; }
@@ -197,7 +217,10 @@ fn app() -> NodeHandle {
     let status = Signal::new("Starting…".to_string());
     let incoming = Signal::new(Option::<Incoming>::None);
     let devices = Signal::new(Vec::<Device>::new());
-    let selected_file = Signal::new(Option::<String>::None);
+    // QS_SEND_FILE=/path preselects the file to send, bypassing the native file
+    // dialog — for hands-free/automated send testing via the rinch debug MCP
+    // (the GTK/portal dialog isn't part of the rinch DOM, so it can't be driven).
+    let selected_file = Signal::new(std::env::var("QS_SEND_FILE").ok());
     // The app always advertises (mDNS + BLE) while it's open — a receiver that
     // isn't discoverable can't receive, so there's no user-facing toggle for it.
     // The hidden QS_START_INVISIBLE=1 dev env var starts with mDNS off to force
@@ -252,6 +275,9 @@ fn app() -> NodeHandle {
             // ON DEMAND when the user picks a file to send — running it while
             // idle makes phones treat us as a sender and breaks receiving.
             let mut discovery_active = false;
+            // True while the user is on the Send tab, so a send can pause
+            // discovery to free the radio and we know to resume it afterward.
+            let mut on_send_tab = false;
             // Mirrors the UI "Auto-accept" toggle, kept in sync via Cmd so the
             // backend never has to read a UI Signal off-thread.
             let mut auto_accept_enabled = false;
@@ -281,6 +307,15 @@ fn app() -> NodeHandle {
                     });
                 }
             };
+
+            // On a normal kill/logout/shutdown (SIGTERM) or Ctrl-C (SIGINT), stop
+            // RQS gracefully: that cancels the cancellation token, so an in-flight
+            // L2CAP connection breaks to its deterministic teardown and a live
+            // WIFI_HOTSPOT SoftAP is torn down instead of outliving the process.
+            // .ok() so a (near-impossible) registration failure just disables this
+            // arm rather than killing the backend.
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
 
             loop {
                 tokio::select! {
@@ -326,6 +361,13 @@ fn app() -> NodeHandle {
                                 Some(State::Disconnected) => { status.send("Ready".to_string()); incoming.send(None); is_sending = false; send_pin.send(None); sending_id.send(None); }
                                 _ => {}
                             }
+                            // A send pauses discovery to free the radio; resume it once the
+                            // transfer ends, if the user is still on the Send tab.
+                            if matches!(m.state, Some(State::Finished | State::Rejected | State::Cancelled | State::Disconnected))
+                                && on_send_tab && !discovery_active {
+                                let _ = rqs.discovery(dch.clone());
+                                discovery_active = true;
+                            }
                         }
                     }
                     r = dch_rx.recv() => {
@@ -333,19 +375,27 @@ fn app() -> NodeHandle {
                             if ep.present == Some(false) {
                                 let id = ep.id.clone();
                                 devices.update_send(move |list| list.retain(|d| d.id != id));
-                            } else if let (Some(ip), Some(port)) = (ep.ip.clone(), ep.port.clone()) {
-                                let dev = Device {
-                                    id: ep.id.clone(),
-                                    name: ep.name.clone().unwrap_or_else(|| ep.id.clone()),
-                                    addr: format!("{ip}:{port}"),
+                            } else {
+                                // mDNS endpoints carry ip+port; BLE ("visible to
+                                // everyone") ones carry a Bluetooth address + PSM
+                                // and no ip. Accept either.
+                                let name = ep.name.clone().unwrap_or_else(|| ep.id.clone());
+                                let dev = if let (Some(ip), Some(port)) = (ep.ip.clone(), ep.port.clone()) {
+                                    Some(Device { id: ep.id.clone(), name, addr: format!("{ip}:{port}"), bt_address: None, psm: None })
+                                } else if let Some(bt) = ep.bt_address.clone() {
+                                    Some(Device { id: ep.id.clone(), name, addr: String::new(), bt_address: Some(bt), psm: ep.psm })
+                                } else {
+                                    None
                                 };
-                                devices.update_send(move |list| {
-                                    if let Some(d) = list.iter_mut().find(|d| d.id == dev.id) {
-                                        *d = dev.clone();
-                                    } else {
-                                        list.push(dev.clone());
-                                    }
-                                });
+                                if let Some(dev) = dev {
+                                    devices.update_send(move |list| {
+                                        if let Some(d) = list.iter_mut().find(|d| d.id == dev.id) {
+                                            *d = dev.clone();
+                                        } else {
+                                            list.push(dev.clone());
+                                        }
+                                    });
+                                }
                             }
                         }
                     }
@@ -356,11 +406,19 @@ fn app() -> NodeHandle {
                             Some(Cmd::Reject(id)) => { let _ = msg_sender.send(ChannelMessage { id, direction: ChannelDirection::FrontToLib, action: Some(ChannelAction::RejectTransfer), ..Default::default() }); }
                             Some(Cmd::Send { id, name, addr, path }) => {
                                 is_sending = true;
+                                // Pause discovery for the duration of the transfer: the BLE
+                                // scan/advert + mDNS browse share the 2.4GHz radio and were
+                                // stalling Wi-Fi sends. Resumed on the terminal state below.
+                                if discovery_active {
+                                    rqs.stop_discovery();
+                                    discovery_active = false;
+                                }
                                 let _ = sender_file.send(SendInfo { id, name, addr, ob: OutboundPayload::Files(vec![path]) }).await;
                             }
                             Some(Cmd::SetDownload(p)) => rqs.set_download_path(Some(PathBuf::from(p))),
                             Some(Cmd::SetAutoAccept(v)) => auto_accept_enabled = v,
                             Some(Cmd::StartDiscovery) => {
+                                on_send_tab = true;
                                 if !discovery_active {
                                     let _ = rqs.discovery(dch.clone());
                                     discovery_active = true;
@@ -371,12 +429,19 @@ fn app() -> NodeHandle {
                             // pure receiver — running it idle advertises us as a sender
                             // (0xFE2C) and stops phones from listing us to receive.
                             Some(Cmd::StopDiscovery) => {
+                                on_send_tab = false;
                                 if discovery_active {
                                     rqs.stop_discovery();
                                     discovery_active = false;
                                 }
                             }
                         }
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        shutdown_and_exit(&mut rqs, "SIGINT").await;
+                    }
+                    Some(_) = async { sigterm.as_mut()?.recv().await } => {
+                        shutdown_and_exit(&mut rqs, "SIGTERM").await;
                     }
                 }
             }
@@ -519,15 +584,23 @@ fn app() -> NodeHandle {
                                     move || {
                                         // Sending requires a chosen file; otherwise this click is a no-op.
                                         if let Some(f) = selected_file.get() {
-                                            sending_id.set(Some(d.id.clone()));
-                                            send_pin.set(None);
-                                            let _ = cmd.get().send(Cmd::Send { id: d.id.clone(), name: d.name.clone(), addr: d.addr.clone(), path: f });
-                                            status.set(format!("Sending to {}…", d.name));
+                                            if d.bt_address.is_some() {
+                                                // Found over BLE; sending over L2CAP isn't wired up yet (Phase 2).
+                                                status.set(format!("{} is visible over Bluetooth — direct send is coming soon. For now, open its Quick Share receive screen.", d.name));
+                                            } else {
+                                                sending_id.set(Some(d.id.clone()));
+                                                send_pin.set(None);
+                                                let _ = cmd.get().send(Cmd::Send { id: d.id.clone(), name: d.name.clone(), addr: d.addr.clone(), path: f });
+                                                status.set(format!("Sending to {}…", d.name));
+                                            }
                                         }
                                     }
                                 },
                                 span { class: "qs-chip-glyph", "→" }
                                 {d.name.clone()}
+                                if d.bt_address.is_some() {
+                                    span { class: "qs-chip-badge", "visible to everyone" }
+                                }
                             }
                         }
                         if devices.get().is_empty() {
