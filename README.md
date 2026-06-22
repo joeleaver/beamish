@@ -8,7 +8,10 @@ your PC. Built in Rust on the [Rinch](https://github.com/joeleaver/rinch) GUI fr
 - **Receive** files from a nearby phone with an on-screen PIN-confirm consent prompt.
 - **Send** files to discovered devices.
 - Lives in the **system tray** and stays discoverable in the background.
-- Transfers negotiate BLE → L2CAP → Wi-Fi for full-speed transfers.
+- Transfers negotiate BLE → L2CAP → Wi-Fi for full-speed transfers, and can
+  upgrade to a **direct Wi-Fi hotspot** — the phone joins a short-lived access
+  point Beamish brings up co-channel — to sidestep the phone's flaky
+  infrastructure Wi-Fi, falling back to LAN Wi-Fi when that isn't available.
 
 ## Install
 
@@ -36,6 +39,13 @@ chmod +x Beamish-x86_64.AppImage
 
 Beamish talks to BlueZ for Bluetooth, so make sure it's running
 (`systemctl status bluetooth`). The `.deb`/`.rpm` declare `bluez` as a dependency.
+
+The direct Wi-Fi-hotspot upgrade additionally uses **NetworkManager**, **iw**, and
+**pkexec/polkit** (the `.deb`/`.rpm` recommend these). A tiny privileged helper —
+`beamish-vif-helper`, authorized by a bundled polkit policy with no password prompt
+for the active local session — creates the hotspot interface; everything else runs
+unprivileged. Without them, transfers simply stay on LAN Wi-Fi. The AppImage can't
+install the helper/policy, so it always uses LAN Wi-Fi.
 
 **Start at login** (optional) — copy the bundled autostart entry so Beamish boots
 into the tray ready to receive:
