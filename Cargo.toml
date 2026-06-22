@@ -11,7 +11,7 @@ authors = ["Joe Leaver"]
 
 [dependencies]
 rinch = { git = "https://github.com/joeleaver/rinch", branch = "main", features = ["desktop", "components", "theme", "system-tray"] }
-rqs_lib = { git = "https://github.com/joeleaver/rquickshare", branch = "beamish" }
+rqs_lib = { git = "https://github.com/joeleaver/rquickshare", branch = "beamish", features = ["linux-softap"] }
 tokio = { version = "1", features = ["full"] }
 rfd = "0.15"
 tracing-subscriber = "0.3"
@@ -35,12 +35,20 @@ section = "net"
 priority = "optional"
 # bluez provides the org.bluez D-Bus service Beamish talks to at runtime.
 depends = "$auto, bluez"
+# The WIFI_HOTSPOT bandwidth upgrade needs NetworkManager (AP + shared NAT/DHCP),
+# iw (the privileged vif helper), and pkexec/polkit (to run that helper without a
+# password for an active session). All soft: without them the transfer simply
+# stays on the WIFI_LAN upgrade path.
+recommends = "network-manager, iw, pkexec | policykit-1"
 extended-description = """\
 Beamish is a small desktop app that sends and receives files with Android \
 phones over Google Quick Share (Nearby Share), using Bluetooth LE/L2CAP and \
 Wi-Fi. It lives in the system tray and stays discoverable in the background."""
 assets = [
     ["target/release/beamish", "usr/bin/", "755"],
+    # Privileged Wi-Fi vif helper for the WIFI_HOTSPOT upgrade + its polkit policy.
+    ["target/release/beamish-vif-helper", "usr/libexec/", "755"],
+    ["assets/org.beamish.vif-helper.policy", "usr/share/polkit-1/actions/", "644"],
     ["assets/beamish.desktop", "usr/share/applications/", "644"],
     ["assets/icons/icon_16.png",  "usr/share/icons/hicolor/16x16/apps/beamish.png",    "644"],
     ["assets/icons/icon_32.png",  "usr/share/icons/hicolor/32x32/apps/beamish.png",    "644"],
@@ -61,6 +69,8 @@ assets = [
 license = "GPL-3.0-or-later"
 assets = [
     { source = "target/release/beamish", dest = "/usr/bin/beamish", mode = "755" },
+    { source = "target/release/beamish-vif-helper", dest = "/usr/libexec/beamish-vif-helper", mode = "755" },
+    { source = "assets/org.beamish.vif-helper.policy", dest = "/usr/share/polkit-1/actions/org.beamish.vif-helper.policy", mode = "644" },
     { source = "assets/beamish.desktop", dest = "/usr/share/applications/beamish.desktop", mode = "644" },
     { source = "assets/icons/icon_16.png",  dest = "/usr/share/icons/hicolor/16x16/apps/beamish.png",    mode = "644" },
     { source = "assets/icons/icon_32.png",  dest = "/usr/share/icons/hicolor/32x32/apps/beamish.png",    mode = "644" },

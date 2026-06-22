@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Beamish</vendor>
+  <vendor_url>https://github.com/joeleaver/beamish</vendor_url>
+
+  <!--
+    Authorizes pkexec to run the Beamish Wi-Fi vif helper. The helper only
+    creates/deletes the `apN` virtual interface for the Wi-Fi-hotspot bandwidth
+    upgrade (the SoftAP itself + DHCP/NAT are driven unprivileged over
+    NetworkManager). An active local session is allowed without a password so the
+    transfer's WiFi upgrade is seamless; remote/inactive sessions must
+    authenticate as an administrator.
+  -->
+  <action id="org.beamish.vif-helper">
+    <description>Manage the Beamish Wi-Fi hotspot interface</description>
+    <message>Authentication is required to set up the Beamish Wi-Fi hotspot</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/beamish-vif-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">false</annotate>
+  </action>
+</policyconfig>
