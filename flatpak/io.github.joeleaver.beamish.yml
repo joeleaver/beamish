@@ -116,8 +116,9 @@ modules:
         done
     sources:
       - type: git
-        url: file:///home/joe/dev/beamish
-        branch: main
+        url: https://github.com/joeleaver/beamish.git
+        tag: v0.2.1
+        commit: 5a8813005296e5c7ca8605194540aec7d28847c8
         disable-shallow-clone: true
       - cargo-sources.json
       - type: file
