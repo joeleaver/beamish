@@ -697,13 +697,23 @@ fn main() {
         .item(MenuItem::new("Show Beamish").on_click(show_current_window))
         .separator()
         .item(MenuItem::new("Quit").on_click(close_current_window));
+    // Build the tray, but DON'T crash if it can't be created: a desktop without a
+    // StatusNotifierWatcher (e.g. vanilla GNOME with no AppIndicator extension)
+    // makes ksni's build() fail, and an unhandled error there would crash the app
+    // on startup for a large share of users. Degrade to no-tray instead.
     let _tray = TrayIconBuilder::new()
         .with_tooltip("Beamish — ready to receive")
         .with_icon_png(include_bytes!("../assets/icon.png"))
-        .expect("failed to load tray icon")
+        .expect("failed to load tray icon") // embedded asset; infallible in practice
         .with_menu(tray_menu)
-        .build()
-        .expect("failed to create tray icon");
+        .build();
+    let has_tray = match &_tray {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("beamish: system tray unavailable ({e}); running without it");
+            false
+        }
+    };
 
     rinch::run_with_window_props(
         app,
@@ -720,10 +730,16 @@ fn main() {
             app_id: Some(
                 std::env::var("BEAMISH_APP_ID").unwrap_or_else(|_| "beamish".into()),
             ),
-            // Hide to tray on window-close instead of quitting (keeps receiving).
-            on_close_requested: Some(std::sync::Arc::new(|| {
-                hide_current_window();
-                false
+            // With a tray, window-close hides to it (keeps receiving in the
+            // background); without one, there'd be no way to bring the window back,
+            // so close actually quits.
+            on_close_requested: Some(std::sync::Arc::new(move || {
+                if has_tray {
+                    hide_current_window();
+                    false
+                } else {
+                    true
+                }
             })),
             ..Default::default()
         },
