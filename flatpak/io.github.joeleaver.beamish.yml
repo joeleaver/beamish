@@ -117,8 +117,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/joeleaver/beamish.git
-        tag: v0.2.1
-        commit: 5a8813005296e5c7ca8605194540aec7d28847c8
+        tag: v0.2.2
+        commit: 7a5ba7cbc040b81ea75beee79ecf241af2a0324c
         disable-shallow-clone: true
       - cargo-sources.json
       - type: file
